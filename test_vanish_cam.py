@@ -1,13 +1,21 @@
+import ast
+import hashlib
+import inspect
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 import mediapipe as mp
 
-from local_app.vanish_cam import (
+from models_manifest import ModelMetadata
+from vanish_cam import (
     AppState, MultiViewGestureRecognizer, recognize_gesture, start_vanish_on_gesture,
     victory_landmark_score,
 )
+import vanish_cam as app
 
 
 def hand_points(extended=(True, True, False, False)):
@@ -30,6 +38,79 @@ def hand_points(extended=(True, True, False, False)):
 
 def landmarks(points):
     return [SimpleNamespace(x=x, y=y, z=z) for x, y, z in points]
+
+
+class ModelVerificationTests(unittest.TestCase):
+    @staticmethod
+    def model(path: Path, content: bytes, trusted_content: bytes | None = None):
+        path.write_bytes(content)
+        trusted = content if trusted_content is None else trusted_content
+        return ModelMetadata(
+            filename=path.name,
+            local_path=path,
+            official_url=None,
+            expected_sha256=hashlib.sha256(trusted).hexdigest().upper(),
+            expected_size=len(content),
+        )
+
+    def test_required_models_are_verified_for_both_modes(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            segmenter = self.model(root / "segmenter.tflite", b"segmenter")
+            gesture = self.model(root / "gesture.task", b"gesture")
+            hand = self.model(root / "hand.task", b"hand")
+            with (
+                patch.object(app, "SELFIE_SEGMENTER", segmenter),
+                patch.object(app, "GESTURE_RECOGNIZER", gesture),
+                patch.object(app, "HAND_LANDMARKER", hand),
+            ):
+                app.verify_required_models("normal")
+                app.verify_required_models("naruto")
+
+    def test_missing_model_fails_with_offline_preparation_command(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            missing = ModelMetadata(
+                filename="missing.tflite",
+                local_path=root / "missing.tflite",
+                official_url=None,
+                expected_sha256="0" * 64,
+                expected_size=1,
+            )
+            gesture = self.model(root / "gesture.task", b"gesture")
+            with (
+                patch.object(app, "SELFIE_SEGMENTER", missing),
+                patch.object(app, "GESTURE_RECOGNIZER", gesture),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "prepare_models.py"):
+                    app.verify_required_models("normal")
+
+    def test_tampered_model_is_rejected_by_sha256(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            segmenter = self.model(root / "segmenter.tflite", b"segmenter")
+            gesture = self.model(
+                root / "gesture.task", b"tampered", trusted_content=b"trusted!"
+            )
+            with (
+                patch.object(app, "SELFIE_SEGMENTER", segmenter),
+                patch.object(app, "GESTURE_RECOGNIZER", gesture),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "SHA-256"):
+                    app.verify_required_models("normal")
+
+    def test_runtime_has_no_model_downloader(self):
+        self.assertFalse(hasattr(app, "download_models"))
+
+    def test_runtime_source_has_no_network_imports(self):
+        network_modules = {"http", "requests", "socket", "urllib"}
+        imported_modules = set()
+        for node in ast.walk(ast.parse(inspect.getsource(app))):
+            if isinstance(node, ast.Import):
+                imported_modules.update(alias.name.split(".", 1)[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported_modules.add(node.module.split(".", 1)[0])
+        self.assertTrue(network_modules.isdisjoint(imported_modules))
 
 
 class VictoryGestureTests(unittest.TestCase):
@@ -184,13 +265,19 @@ class MultiViewTests(unittest.TestCase):
             SimpleNamespace(recognize_for_video=lambda image, timestamp: self.empty), alternate
         )
         self.assertEqual(recognize_gesture(detector, self.image, 1000)[0], "No_Hand")
-        self.assertEqual(len(calls), 10)
+        self.assertEqual(len(calls), 3)
+        recognize_gesture(detector, self.image, 1139)
+        self.assertEqual(len(calls), 3)
         recognize_gesture(detector, self.image, 1140)
+        self.assertEqual(len(calls), 6)
+        alternate.recognize = lambda image: calls.append(image) or self.victory
+        self.assertEqual(recognize_gesture(detector, self.image, 1280)[0], "Victory")
+        self.assertEqual(len(calls), 7)
+        alternate.recognize = lambda image: calls.append(image) or self.empty
+        self.assertEqual(recognize_gesture(detector, self.image, 1419)[0], "No_Hand")
+        self.assertEqual(len(calls), 7)
+        self.assertEqual(recognize_gesture(detector, self.image, 1420)[0], "No_Hand")
         self.assertEqual(len(calls), 10)
-        alternate.recognize = lambda image: self.victory
-        self.assertEqual(recognize_gesture(detector, self.image, 1420)[0], "Victory")
-        alternate.recognize = lambda image: self.empty
-        self.assertEqual(recognize_gesture(detector, self.image, 1560)[0], "No_Hand")
 
     def test_primary_victory_avoids_extra_inference(self):
         calls = []
@@ -212,11 +299,13 @@ class MultiViewTests(unittest.TestCase):
             SimpleNamespace(recognize_for_video=lambda image, timestamp: self.empty),
             SimpleNamespace(recognize=recognize),
         )
-        self.assertEqual(recognize_gesture(detector, self.image, 1000)[0], "Victory")
+        self.assertEqual(recognize_gesture(detector, self.image, 1000)[0], "No_Hand")
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(recognize_gesture(detector, self.image, 1140)[0], "Victory")
         self.assertEqual(detector.preferred_crop, "lower_left")
         self.assertEqual(detector.preferred_rotation, 0)
         calls.clear()
-        self.assertEqual(recognize_gesture(detector, self.image, 1140)[0], "Victory")
+        self.assertEqual(recognize_gesture(detector, self.image, 1280)[0], "Victory")
         self.assertEqual(calls, [(37, 24)])
 
 

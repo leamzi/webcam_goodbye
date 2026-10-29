@@ -2,7 +2,7 @@
 setlocal
 cd /d "%~dp0"
 if errorlevel 1 (
-  echo [Vanish Lab] Impossibile accedere alla cartella del progetto.
+  echo [VanishCam] Unable to access the project directory.
   goto :error
 )
 
@@ -12,34 +12,34 @@ set "FOUND_PYTHON_313=0"
 
 if exist "%VENV_PY%" goto :venv_ready
 
-echo [Vanish Lab] Creo l'ambiente Python locale...
+echo [VanishCam] Creating local Python environment...
 call :try_py_launcher
 if not exist "%VENV_PY%" call :try_python_command
 if exist "%VENV_PY%" goto :venv_ready
 
 if "%FOUND_PYTHON_313%"=="0" (
-  echo [Vanish Lab] Python 3.13 non trovato. VanishCam richiede Python 3.13.
+  echo [VanishCam] Python 3.13 was not found. VanishCam requires Python 3.13.
 ) else (
-  echo [Vanish Lab] Impossibile creare l'ambiente virtuale in "%VENV_DIR%".
+  echo [VanishCam] Unable to create the virtual environment at "%VENV_DIR%".
 )
 goto :error
 
 :venv_ready
 "%VENV_PY%" -c "import sys; raise SystemExit(0 if sys.version_info[:2] == (3, 13) else 1)" >nul 2>nul
 if errorlevel 1 (
-  echo [Vanish Lab] L'ambiente virtuale deve usare Python 3.13: "%VENV_PY%".
-  echo [Vanish Lab] Elimina la cartella .venv e riavvia dopo aver installato Python 3.13.
+  echo [VanishCam] The virtual environment must use Python 3.13: "%VENV_PY%".
+  echo [VanishCam] Delete .venv and restart after installing Python 3.13.
   goto :error
 )
 
 "%VENV_PY%" -c "import cv2, mediapipe, numpy, pyvirtualcam, pygame" >nul 2>nul
 if errorlevel 1 (
-  echo [Vanish Lab] Installo i componenti necessari. Serve internet solo questa volta...
+  echo [VanishCam] Installing required components. Internet access is required for this step...
   "%VENV_PY%" -m pip install -r "requirements.txt"
   if errorlevel 1 goto :error
 )
 
-echo [Vanish Lab] Avvio la webcam...
+echo [VanishCam] Starting webcam...
 "%VENV_PY%" "vanish_cam.py" %*
 if errorlevel 1 goto :error
 exit /b 0
@@ -64,6 +64,6 @@ exit /b 0
 
 :error
 echo.
-echo Impossibile avviare Vanish Lab. Controlla i messaggi qui sopra.
+echo Unable to start VanishCam. Review the messages above for details.
 pause
 exit /b 1

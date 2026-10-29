@@ -8,7 +8,6 @@ from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parent
 MODELS_DIR = PROJECT_DIR / "models"
-PENDING_SHA256 = None
 
 
 @dataclass(frozen=True)

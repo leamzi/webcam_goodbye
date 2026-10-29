@@ -1,74 +1,181 @@
-# VanishCam — webcam disappearance effects
+# VanishCam
 
-Video is processed on your computer. It is neither recorded nor sent to a server. The preview window and virtual camera show only the video and effects, without overlaid menus, instructions, or text.
+VanishCam applies local disappearance effects to a live webcam feed. The main
+application currently supports two modes: **Normal Vanish** and
+**Naruto Vanish**.
 
-For step-by-step instructions in English and Italian, see the [user guide](USER_GUIDE_EN_IT.md).
+## Requirements
 
-## ☕ Buy me a coffee
+- Windows 10 or newer.
+- Python 3.13.
+- A webcam.
+- Optional: OBS Studio or Unity Capture for virtual-camera output.
 
-If you like this project and want to support it, you can buy me a coffee through [PayPal](https://paypal.me/nicovic17) or [Revolut](https://revolut.me/nicoauriemma).
+All Python packages are installed into the repository-local `.venv`. The
+launch and build scripts do not install packages globally and do not upgrade
+pip automatically.
 
-## Download for Windows
+## Installation
 
-[Download VanishCam.exe]( https://nicoaauriemma.vercel.app/shop ) and double-click it to run the app. You do not need to install Python.
-
-The published EXE may predate the Particles and Goku modes. To use them now, run the local scripts or rebuild the EXE from these sources.
-
-## Getting started
-
-1. Double-click `AVVIA_LOCALE.bat`.
-2. In the start menu, choose **Normal Vanish**, **Naruto Vanish**, **Particles**, or **Goku** with the mouse or the `1`, `2`, `3`, and `4` keys.
-3. Step out of the camera frame for 4 seconds while the background is captured. The terminal tells you when you can step back in.
-
-**Normal Vanish:** Raise your index and middle fingers in a V sign. The dissolve starts as soon as the gesture is recognized and lasts about 3.6 seconds.
-
-**Particles:** Make the same V sign as in Normal Vanish. Your silhouette breaks into small colored fragments that drift sideways as if carried by the wind. The effect lasts about 2.1 seconds. It captures your silhouette once when the effect starts to keep the video smooth.
-
-**Goku:** Hold your index and middle fingers straight and together against your forehead for 1 second. Animated vertical comic-style lines run across your silhouette just before you teleport away and linger briefly afterward. To reappear, lower your hand, then repeat the gesture for another 1 second. The return uses the reverse effect. If you break the pose, the countdown starts over. `assets/teleport.MP3` plays on both disappearance and reappearance. The terminal shows the countdown for each gesture. The `V` and `R` keys are disabled in this mode: the gesture is the only way to disappear and reappear. No text is overlaid on the video.
-
-**Naruto Vanish:** Bring your palms together in front of the webcam, with your fingers side by side rather than interlaced. Keep both hands visible. As soon as the gesture is recognized, you vanish in a cloud of smoke and a wooden log appears, falls, and remains visible until you press `R`. No microphone is needed. Naruto mode uses `hand_landmarker.task` to track both hands. `assets/vanish.MP3` plays through your computer speakers when the disappearance starts, including when triggered with `V`. You can trigger it again after pressing `R`.
-
-To start a mode without the menu:
+Clone the repository and open PowerShell in its root directory:
 
 ```powershell
-local_app\AVVIA_LOCALE.bat --mode naruto
-local_app\AVVIA_LOCALE.bat --mode normal
-local_app\AVVIA_LOCALE.bat --mode particles
-local_app\AVVIA_LOCALE.bat --mode goku
+git clone <repository-url>
+cd webcam_goodbye
 ```
 
-## Virtual camera and OBS
-
-If [OBS Studio](https://obsproject.com/) is installed, the app automatically tries to open **OBS Virtual Camera**. The terminal shows the device name. Use `AVVIA_VIRTUAL.bat` to require a virtual camera. Select **OBS Virtual Camera** in the app that will receive the video. OBS's virtual camera must be stopped while this app is producing its output.
-
-To use the effect in an OBS scene, run `AVVIA_OBS.bat`, add a **Window Capture** source, select **Webcam - Anteprima**, and then start the virtual camera from OBS. Alternatively, use [Unity Capture](https://github.com/schellingb/UnityCapture) as a separate virtual video source:
+Create the Python 3.13 environment and install the pinned dependencies:
 
 ```powershell
-local_app\AVVIA_VIRTUAL.bat --virtual-backend unitycapture
+py -3.13 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-OBS has only one virtual camera. Do not use it as both an OBS input and output at the same time. See the [pyvirtualcam documentation](https://github.com/letmaik/pyvirtualcam#supported-virtual-cameras).
+Download and verify the required MediaPipe models explicitly:
+
+```powershell
+.\.venv\Scripts\python.exe prepare_models.py
+```
+
+`prepare_models.py` is the only project component that downloads models. It
+accepts only HTTPS URLs on `storage.googleapis.com`, restricts redirects,
+downloads through temporary `.part` files, and verifies both size and SHA-256
+before replacing a destination file.
+
+## Model verification and offline runtime
+
+The downloaded models are stored under `models/`, which is intentionally not
+tracked by Git. `hand_landmarker.task` is tracked because Naruto mode requires
+it directly.
+
+Before MediaPipe is initialized, `vanish_cam.py` verifies every required model
+against the size and SHA-256 recorded in `models_manifest.py`. If a model is
+missing or altered, startup stops and instructs you to run:
+
+```powershell
+.\.venv\Scripts\python.exe prepare_models.py
+```
+
+To verify existing files without downloading anything:
+
+```powershell
+.\.venv\Scripts\python.exe prepare_models.py --verify-only
+```
+
+The main application does not download models or make project-defined network
+requests during normal runtime.
+
+## Running VanishCam
+
+Double-click `AVVIA_LOCALE.bat`, or run it from a terminal:
+
+```powershell
+.\AVVIA_LOCALE.bat
+```
+
+The launcher stays in the repository root, requires Python 3.13, creates or
+reuses `.venv`, and installs `requirements.txt` only inside that environment.
+It rejects an existing `.venv` created with another Python version.
+
+To skip the menu:
+
+```powershell
+.\AVVIA_LOCALE.bat --mode normal
+.\AVVIA_LOCALE.bat --mode naruto
+```
+
+Camera and output settings can be changed from the command line:
+
+```powershell
+.\AVVIA_LOCALE.bat --camera 1 --width 1280 --height 720 --fps 30
+```
+
+Use `--gesture-debug` to print recognition diagnostics in the terminal without
+adding text to the video.
+
+## Modes
+
+### Normal Vanish
+
+Raise your index and middle fingers in a V sign. The recognized gesture starts
+a dissolve effect lasting approximately 3.6 seconds.
+
+### Naruto Vanish
+
+Bring both palms together in front of the webcam with fingers side by side.
+The effect replaces the detected person with smoke and a wooden log.
+`assets/vanish.MP3` plays through the local audio output. Press `R` before
+triggering the effect again.
+
+For either mode, step out of the camera frame during the initial four-second
+background capture.
 
 ## Controls
 
 - `SPACE`: capture a new background.
 - `R`: make the person reappear.
-- `V`: manually start the selected mode's effect.
+- `V`: trigger the selected effect manually.
 - `F`: toggle fullscreen.
-- `Q` or `ESC`: quit and release the cameras.
+- `Q` or `ESC`: quit and release camera resources.
 
-The `V` and `R` keys are disabled in Goku mode.
+## Virtual camera and OBS
 
-You can change the camera, resolution, and maximum virtual-output FPS:
+VanishCam automatically attempts to use an available virtual-camera backend.
+Use `AVVIA_VIRTUAL.bat` to require virtual-camera output:
 
 ```powershell
-local_app\AVVIA_LOCALE.bat --camera 1 --width 1280 --height 720 --fps 30
+.\AVVIA_VIRTUAL.bat
+.\AVVIA_VIRTUAL.bat --virtual-backend unitycapture
 ```
 
-To troubleshoot gesture recognition without adding text to the video, pass `--gesture-debug`. Diagnostic information appears only in the terminal.
+Use `AVVIA_OBS.bat` to disable direct virtual-camera output and capture the
+preview window in OBS instead. OBS Virtual Camera must not already be active
+when VanishCam is using it as its output device.
 
-## Visual assets
+## Offline self-test
 
-The [wooden log](assets/substitution_log.png) is an original illustration generated with ImageGen using the supplied image as a visual reference. Smoke is drawn in real time by `naruto_effect.py` so it follows the person's position and scales with the video. We also considered a [CC0 smoke sprite sheet](https://opengameart.org/content/smoke-sprite-sheet), but the procedural animation adapts better to dynamic positioning without an additional asset. No anime frames or assets are included in the project.
+The self-test verifies model hashes, model initialization, image assets and
+audio decoding without opening the webcam:
 
-Goku mode uses the [MediaPipe BlazeFace short-range model](https://github.com/google-ai-edge/mediapipe/blob/master/mediapipe/tasks/web/vision/README.md) to estimate the forehead position and `hand_landmarker.task` to track the fingers. The teleport's visual trace is drawn in code, without anime frames.
+```powershell
+.\.venv\Scripts\python.exe vanish_cam.py --self-test
+```
+
+## Windows build
+
+After dependencies and models have been prepared, run:
+
+```powershell
+.\BUILD_WINDOWS.bat
+```
+
+The build script:
+
+- requires Python 3.13 and uses only `.venv`;
+- installs pinned runtime dependencies and PyInstaller 6.22.3 inside `.venv`;
+- runs `prepare_models.py --verify-only` and never downloads models;
+- builds `dist\VanishCam.exe` from `VanishCam.spec`;
+- runs the executable's offline self-test after building.
+
+If verification fails, prepare the models explicitly before retrying the
+build.
+
+## Security and privacy scope
+
+- Webcam frames and generated images are processed locally by project code.
+- Project code does not upload, record or send webcam frames to a server.
+- Model assets are loaded from verified local files.
+- Normal application runtime performs no project-defined model downloads.
+- `prepare_models.py` performs the explicit, user-initiated model downloads.
+- MediaPipe and the other Python packages are third-party dependencies. The
+  installed MediaPipe wheel contains internal networking and telemetry-capable
+  components that are not configurable through its supported Python API.
+- This fork does not patch MediaPipe DLLs or claim to disable unsupported
+  MediaPipe internals. It therefore does not claim to be completely free of
+  third-party telemetry.
+
+## Assets
+
+`assets/substitution_log.png` is an original transparent-background asset.
+Smoke is rendered procedurally by `naruto_effect.py`, allowing it to follow the
+detected person without additional downloaded artwork.

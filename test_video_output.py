@@ -6,7 +6,7 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 
-from local_app import vanish_cam as app
+import vanish_cam as app
 
 
 def arguments(**overrides):
@@ -72,7 +72,6 @@ class VideoLoopTests(unittest.TestCase):
         displayed = []
         with ExitStack() as mocks:
             mocks.enter_context(patch.object(app, "parse_args", return_value=arguments()))
-            mocks.enter_context(patch.object(app, "download_models"))
             mocks.enter_context(patch.object(app, "open_camera", return_value=capture))
             mocks.enter_context(patch.object(app, "create_tasks", return_value=(segmenter, recognizer)))
             opening = mocks.enter_context(patch.object(app, "open_virtual_camera", return_value=camera))
