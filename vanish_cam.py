@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import argparse
-import os
+import hashlib
 import platform
 import sys
 import time
-import urllib.error
-import urllib.request
 from dataclasses import dataclass, replace
 from contextlib import ExitStack
 from pathlib import Path
@@ -18,6 +16,8 @@ import mediapipe as mp
 import numpy as np
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
+
+from models_manifest import GESTURE_RECOGNIZER, HAND_LANDMARKER, SELFIE_SEGMENTER
 
 try:
     from .naruto_effect import (
@@ -33,25 +33,11 @@ except ImportError:
     from vanish_sound import SOUND_PATH, VanishSound
 
 
-APP_DIR = Path(__file__).resolve().parent
-MODEL_DIR = APP_DIR / "models"
 WINDOW_NAME = "Webcam - Anteprima"
 
-SEGMENTER_MODEL = MODEL_DIR / "selfie_segmenter_landscape.tflite"
-GESTURE_MODEL = MODEL_DIR / "gesture_recognizer.task"
-HAND_MODEL = APP_DIR / "hand_landmarker.task"
-
-MODEL_URLS = {
-    SEGMENTER_MODEL: (
-        "https://storage.googleapis.com/mediapipe-models/image_segmenter/"
-        "selfie_segmenter_landscape/float16/latest/"
-        "selfie_segmenter_landscape.tflite"
-    ),
-    GESTURE_MODEL: (
-        "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/"
-        "gesture_recognizer/float16/1/gesture_recognizer.task"
-    ),
-}
+SEGMENTER_MODEL = SELFIE_SEGMENTER.local_path
+GESTURE_MODEL = GESTURE_RECOGNIZER.local_path
+HAND_MODEL = HAND_LANDMARKER.local_path
 
 CALIBRATION_SECONDS = 4.0
 BACKGROUND_SAMPLE_SECONDS = 0.55
@@ -188,38 +174,46 @@ def send_virtual_frame(camera, frame: np.ndarray) -> None:
     camera.send(np.ascontiguousarray(frame))
 
 
-def download_models(mode: str = "normal") -> None:
-    MODEL_DIR.mkdir(parents=True, exist_ok=True)
-    for destination, url in MODEL_URLS.items():
-        if mode == "naruto" and destination == GESTURE_MODEL:
-            continue
-        if destination.exists() and destination.stat().st_size > 100_000:
-            continue
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        while chunk := source.read(256 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest().upper()
 
-        temporary = destination.with_suffix(destination.suffix + ".part")
-        print(f"[Vanish Lab] Scarico {destination.name}...")
-        try:
-            request = urllib.request.Request(
-                url, headers={"User-Agent": "Vanish-Lab/1.0"}
+
+def verify_required_models(mode: str = "normal") -> None:
+    required = [SELFIE_SEGMENTER]
+    required.append(HAND_LANDMARKER if mode == "naruto" else GESTURE_RECOGNIZER)
+    errors = []
+    for model in required:
+        if not model.local_path.is_file():
+            errors.append(f"{model.filename}: file mancante")
+            continue
+        if model.expected_sha256 is None:
+            errors.append(f"{model.filename}: SHA-256 atteso non ancora stabilito")
+            continue
+        actual_size = model.local_path.stat().st_size
+        if model.expected_size is not None and actual_size != model.expected_size:
+            errors.append(
+                f"{model.filename}: dimensione {actual_size}; "
+                f"attesa {model.expected_size}"
             )
-            with urllib.request.urlopen(request, timeout=60) as response:
-                total = int(response.headers.get("Content-Length", 0))
-                received = 0
-                with temporary.open("wb") as output:
-                    while chunk := response.read(1024 * 256):
-                        output.write(chunk)
-                        received += len(chunk)
-                        if total:
-                            percent = int(received * 100 / total)
-                            print(f"\r  {percent:3d}%", end="", flush=True)
-            print()
-            os.replace(temporary, destination)
-        except (OSError, urllib.error.URLError) as error:
-            temporary.unlink(missing_ok=True)
-            raise RuntimeError(
-                "Non riesco a scaricare i modelli MediaPipe. "
-                "Controlla la connessione internet e riprova."
-            ) from error
+            continue
+        actual_hash = _sha256_file(model.local_path)
+        if actual_hash != model.expected_sha256.upper():
+            errors.append(
+                f"{model.filename}: SHA-256 {actual_hash}; "
+                f"atteso {model.expected_sha256.upper()}"
+            )
+
+    if errors:
+        details = "\n".join(f"  - {error}" for error in errors)
+        raise RuntimeError(
+            "Modelli locali mancanti o non verificati:\n"
+            f"{details}\n"
+            "Esegui: .\\.venv\\Scripts\\python.exe prepare_models.py"
+        )
 
 
 def open_camera(index: int, width: int, height: int) -> cv2.VideoCapture:
@@ -243,6 +237,7 @@ def open_camera(index: int, width: int, height: int) -> cv2.VideoCapture:
 
 
 def create_tasks(mode: str = "normal") -> tuple[vision.ImageSegmenter, MultiViewGestureRecognizer | MultiViewHandLandmarker]:
+    verify_required_models(mode)
     segmenter_options = vision.ImageSegmenterOptions(
         base_options=python.BaseOptions(model_asset_path=str(SEGMENTER_MODEL)),
         running_mode=vision.RunningMode.VIDEO,
@@ -634,10 +629,12 @@ def set_fullscreen(enabled: bool) -> None:
 
 def self_test() -> int:
     """Check bundled resources and model initialization without opening a webcam."""
-    required = (SEGMENTER_MODEL, GESTURE_MODEL, HAND_MODEL, SOUND_PATH)
+    required = (SOUND_PATH,)
     missing = [path.name for path in required if not path.is_file()]
     if missing:
         raise RuntimeError(f"Risorse mancanti: {', '.join(missing)}")
+    for mode in ("normal", "naruto"):
+        verify_required_models(mode)
     load_log()
     import pygame.mixer  # The distributed build must contain its MP3 decoder.
     for mode in ("normal", "naruto"):
@@ -662,13 +659,12 @@ def run() -> int:
 
 
 def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str) -> int:
-    download_models(mode)
-    capture = open_camera(args.camera, args.width, args.height)
-    resources.callback(capture.release)
-    capture.set(cv2.CAP_PROP_FPS, args.fps)
     segmenter, recognizer = create_tasks(mode)
     resources.callback(segmenter.close)
     resources.callback(recognizer.close)
+    capture = open_camera(args.camera, args.width, args.height)
+    resources.callback(capture.release)
+    capture.set(cv2.CAP_PROP_FPS, args.fps)
     log_sprite = load_log() if mode == "naruto" else None
     vanish_sound = VanishSound() if mode == "naruto" else None
     if vanish_sound is not None:
